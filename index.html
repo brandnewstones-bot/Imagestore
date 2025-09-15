@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>My Store (Persistent)</title>
+
+  <!-- Supabase client -->
+  <script type="module">
+    import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js/+esm";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import {
+      getAuth,
+      signInWithEmailAndPassword,
+      onAuthStateChanged,
+      signOut
+    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+    /* ---------------- Firebase Auth ---------------- */
+    const firebaseConfig = {
+      apiKey: "AIzaSyA5KtzxCIhpXBLyTzmKtjz1uX7mYD0MSnE",
+      authDomain: "store-requests-80223.firebaseapp.com",
+      projectId: "store-requests-80223",
+      storageBucket: "store-requests-80223.firebasestorage.app",
+      messagingSenderId: "473063205358",
+      appId: "1:473063205358:web:43b94b0b227afd572886ff",
+      measurementId: "G-L3H7Q9TDXK"
+    };
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const OWNER_UID = "47B3sjYcbUhVt0NVsaPvbSUy1NI3";
+
+    /* ---------------- Supabase ---------------- */
+    const supabaseUrl = "https://oytcajtudapjxtdgpqnf.supabase.co";
+    const supabaseKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im95dGNhanR1ZGFwanh0ZGdwcW5mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc5Mzg4MTYsImV4cCI6MjA3MzUxNDgxNn0.0BMooefaV3ze7fLgjxV5kjZWVQK4whLcUvk8SSd5dB8";
+    const supabase = createClient(supabaseUrl, supabaseKey);
+    const BUCKET = "Myfetcher";
+
+    /* ---------------- DOM helpers ---------------- */
+    const el = id => document.getElementById(id);
+
+    // Load existing products on page load
+    async function loadProducts() {
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .order("id", { ascending: false });
+
+      if (error) {
+        console.error("Fetch products error:", error);
+        return;
+      }
+
+      const store = el("store");
+      store.innerHTML = ""; // clear old
+      data.forEach(row => {
+        const div = document.createElement("div");
+        div.className = "product";
+        div.innerHTML = `
+          <img src="${row.image_url}" alt="Product">
+          <div class="price">$${row.price}</div>
+          <button class="buy-btn">Buy</button>
+        `;
+        store.appendChild(div);
+      });
+    }
+
+    // Upload image to Storage + insert row to products table
+    async function addProduct() {
+      const imageInput = el("productImage");
+      const priceInput = el("productPrice");
+      if (!imageInput.files[0] || !priceInput.value) {
+        alert("Please upload an image and enter price.");
+        return;
+      }
+
+      const file = imageInput.files[0];
+      const filePath = `${Date.now()}-${file.name}`;
+
+      // Upload to Storage
+      const { error: uploadErr } = await supabase
+        .storage
+        .from(BUCKET)
+        .upload(filePath, file, { upsert: false });
+
+      if (uploadErr) {
+        alert("Upload failed: " + uploadErr.message);
+        return;
+      }
+
+      // Get public URL
+      const { data: publicData } = supabase
+        .storage
+        .from(BUCKET)
+        .getPublicUrl(filePath);
+
+      // Insert product row
+      const { error: insertErr } = await supabase
+        .from("products")
+        .insert([{ image_url: publicData.publicUrl, price: priceInput.value }]);
+
+      if (insertErr) {
+        alert("DB insert failed: " + insertErr.message);
+        return;
+      }
+
+      imageInput.value = "";
+      priceInput.value = "";
+      el("ownerMenu").style.display = "none";
+      await signOut(auth); // keep your existing behaviour
+      loadProducts(); // refresh view
+    }
+
+    // Firebase auth UI handling
+    onAuthStateChanged(auth, user => {
+      if (user && user.uid === OWNER_UID) {
+        el("loginPopup").style.display = "none";
+      } else {
+        el("ownerMenu").style.display = "none";
+      }
+    });
+
+    window.addEventListener("DOMContentLoaded", () => {
+      loadProducts();
+      el("redDot").addEventListener("click", () => {
+        const user = auth.currentUser;
+        if (!user) {
+          el("loginPopup").style.display =
+            el("loginPopup").style.display === "block" ? "none" : "block";
+          return;
+        }
+        if (user.uid === OWNER_UID) {
+          const menu = el("ownerMenu");
+          menu.style.display = menu.style.display === "block" ? "none" : "block";
+          el("ownerCloseBtn").style.display =
+            menu.style.display === "block" ? "block" : "none";
+        } else {
+          alert("Unauthorized user.");
+        }
+      });
+    });
+
+    // Expose global funcs
+    window.ownerLogin = async () => {
+      try {
+        const email = el("ownerEmail").value;
+        const password = el("ownerPassword").value;
+        const cred = await signInWithEmailAndPassword(auth, email, password);
+        if (cred.user.uid !== OWNER_UID) {
+          await signOut(auth);
+          alert("Unauthorized user.");
+        } else {
+          el("loginPopup").style.display = "none";
+          el("ownerMenu").style.display = "block";
+          el("ownerCloseBtn").style.display = "block";
+        }
+      } catch (err) {
+        alert("Login failed: " + err.message);
+      }
+    };
+    window.ownerCloseAndSignOut = async () => {
+      el("ownerMenu").style.display = "none";
+      await signOut(auth);
+    };
+    window.addProduct = addProduct;
+  </script>
+
+  <style>
+    body { margin:0; font-family:Arial,sans-serif; background:#f5f5f5; }
+    .banner { background:black; color:white; padding:15px;
+      display:flex; justify-content:space-between; align-items:center; }
+    .red-dot { width:20px; height:20px; background:red; border-radius:50%; cursor:pointer; }
+    .store { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+      gap:20px; padding:20px; }
+    .product { background:white; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.1);
+      padding:15px; text-align:center; }
+    .product img { width:100%; height:150px; object-fit:cover; border-radius:8px; }
+    .price { margin:10px 0; font-size:18px; font-weight:bold; }
+    .buy-btn { background:green; color:white; border:none; padding:10px 15px;
+      border-radius:6px; cursor:pointer; }
+
+    .owner-menu, .login-popup {
+      position:absolute; top:60px; right:20px; width:260px;
+      background:white; border:1px solid #ccc; padding:15px; border-radius:8px;
+      box-shadow:0 4px 10px rgba(0,0,0,0.2); display:none; z-index:200;
+    }
+    .owner-menu .close-btn {
+      position:absolute; top:6px; right:8px; border:none; background:transparent;
+      font-size:18px; cursor:pointer; display:none;
+    }
+    .owner-menu input, .login-popup input {
+      display:block; margin:10px 0; padding:8px; width:100%; box-sizing:border-box;
+    }
+    .owner-menu button, .login-popup button {
+      width:100%; padding:10px 15px; border:none; border-radius:6px; cursor:pointer;
+      color:white;
+    }
+    .owner-menu button { background:blue; }
+    .login-popup button { background:darkred; }
+  </style>
+</head>
+
+<body>
+  <div class="banner">
+    <h1>My Store</h1>
+    <div id="redDot" class="red-dot" title="Owner"></div>
+  </div>
+
+  <!-- Login Popup -->
+  <div id="loginPopup" class="login-popup">
+    <h3>Owner Login</h3>
+    <input type="email" id="ownerEmail" placeholder="Email" />
+    <input type="password" id="ownerPassword" placeholder="Password" />
+    <button onclick="ownerLogin()">Login</button>
+  </div>
+
+  <!-- Owner Menu -->
+  <div id="ownerMenu" class="owner-menu">
+    <button id="ownerCloseBtn" class="close-btn" onclick="ownerCloseAndSignOut()">✕</button>
+    <h3>Add Product</h3>
+    <input type="file" id="productImage" accept="image/*" />
+    <input type="text" id="productPrice" placeholder="Enter price" />
+    <button onclick="addProduct()">Add to Store</button>
+  </div>
+
+  <!-- Store -->
+  <div id="store" class="store"></div>
+</body>
+</html>

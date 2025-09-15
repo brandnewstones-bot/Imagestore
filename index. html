@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>My Store</title>
+  <script type="module">
+    /**************  Firebase Auth (unchanged)  **************/
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import {
+      getAuth, signInWithEmailAndPassword,
+      onAuthStateChanged, signOut
+    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyA5KtzxCIhpXBLyTzmKtjz1uX7mYD0MSnE",
+      authDomain: "store-requests-80223.firebaseapp.com",
+      projectId: "store-requests-80223",
+      storageBucket: "store-requests-80223.firebasestorage.app",
+      messagingSenderId: "473063205358",
+      appId: "1:473063205358:web:43b94b0b227afd572886ff",
+      measurementId: "G-L3H7Q9TDXK"
+    };
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const OWNER_UID = "47B3sjYcbUhVt0NVsaPvbSUy1NI3";
+
+    /**************  Supabase client  **************/
+    import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+    const supabase = createClient(
+      "https://oytcajtudapjxtdgpqnf.supabase.co",
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im95dGNhanR1ZGFwanh0ZGdwcW5mIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc5Mzg4MTYsImV4cCI6MjA3MzUxNDgxNn0.0BMooefaV3ze7fLgjxV5kjZWVQK4whLcUvk8SSd5dB8"
+    );
+
+    /**************  DOM refs  **************/
+    const storeEl = () => document.getElementById('store');
+    const ownerMenu = () => document.getElementById('ownerMenu');
+    const loginPopup = () => document.getElementById('loginPopup');
+    const redDot = () => document.getElementById('redDot');
+    const crossBtn = () => document.getElementById('ownerCloseBtn');
+
+    /**************  Auth UI logic  **************/
+    onAuthStateChanged(auth, (user) => {
+      if (user && user.uid === OWNER_UID) {
+        loginPopup().style.display = 'none';
+      } else {
+        ownerMenu().style.display = 'none';
+      }
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      redDot().addEventListener('click', () => {
+        const user = auth.currentUser;
+        if (!user) {
+          loginPopup().style.display =
+            loginPopup().style.display === 'block' ? 'none' : 'block';
+          return;
+        }
+        if (user.uid === OWNER_UID) {
+          const menu = ownerMenu();
+          menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+          crossBtn().style.display = menu.style.display === 'block' ? 'block' : 'none';
+        }
+      });
+      loadProducts();   // Load persisted products on page load
+    });
+
+    window.ownerLogin = async function () {
+      const email = document.getElementById('ownerEmail').value;
+      const password = document.getElementById('ownerPassword').value;
+      try {
+        const userCred = await signInWithEmailAndPassword(auth, email, password);
+        if (userCred.user.uid !== OWNER_UID) {
+          await signOut(auth);
+          alert('Unauthorized user.');
+        } else {
+          loginPopup().style.display = 'none';
+          ownerMenu().style.display = 'block';
+          crossBtn().style.display = 'block';
+        }
+      } catch (err) {
+        alert('Login failed: ' + err.message);
+      }
+    };
+
+    window.ownerCloseAndSignOut = async function () {
+      ownerMenu().style.display = 'none';
+      await signOut(auth).catch(()=>{});
+    };
+
+    /**************  Supabase: load + render products  **************/
+    function renderProduct(p) {
+      const div = document.createElement('div');
+      div.className = 'product';
+      div.innerHTML = `
+        <img src="${p.image_url}" alt="Product">
+        <div class="price">${p.price ? '$' + p.price : ''}</div>
+        <button class="buy-btn">Buy</button>
+      `;
+      storeEl().appendChild(div);
+    }
+
+    async function loadProducts() {
+      const { data, error } = await supabase
+        .from('products')
+        .select('id, image_url, price, created_at')
+        .order('created_at', { ascending: false });
+      if (error) {
+        console.error('Load products error:', error);
+        return;
+      }
+      data.forEach(renderProduct);
+    }
+
+    /**************  Add product (upload + insert) **************/
+    window.addProduct = async function () {
+      const fileInput = document.getElementById('productImage');
+      const priceInput = document.getElementById('productPrice');
+      const file = fileInput.files[0];
+      const price = priceInput.value.trim();
+
+      if (!file || !price) {
+        alert('Please select an image and enter a price.');
+        return;
+      }
+
+      // unique file path
+      const path = `${Date.now()}-${file.name}`;
+
+      // upload to storage
+      const { error: uploadErr } = await supabase
+        .storage
+        .from('Myfetcher')
+        .upload(path, file);
+
+      if (uploadErr) {
+        alert('Upload failed: ' + uploadErr.message);
+        return;
+      }
+
+      // get public URL
+      const { data: pub } = supabase
+        .storage
+        .from('Myfetcher')
+        .getPublicUrl(path);
+      const publicUrl = pub.publicUrl;
+
+      // insert row in products table
+      const { data: inserted, error: insertErr } = await supabase
+        .from('products')
+        .insert([{ image_url: publicUrl, price }])
+        .select();
+
+      if (insertErr) {
+        alert('DB insert failed: ' + insertErr.message);
+        return;
+      }
+
+      renderProduct(inserted[0]);
+
+      // reset fields & hide menu
+      fileInput.value = '';
+      priceInput.value = '';
+      ownerMenu().style.display = 'none';
+      await signOut(auth).catch(()=>{});
+    };
+  </script>
+
+  <style>
+    body { margin:0; font-family:Arial,sans-serif; background:#f5f5f5; }
+    .banner { background:black; color:white; padding:15px;
+      display:flex; justify-content:space-between; align-items:center; }
+    .red-dot { width:20px; height:20px; background:red; border-radius:50%; cursor:pointer; }
+    .store { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr));
+      gap:20px; padding:20px; }
+    .product { background:white; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,0.1);
+      padding:15px; text-align:center; }
+    .product img { width:100%; height:150px; object-fit:cover; border-radius:8px; }
+    .price { margin:10px 0; font-size:18px; font-weight:bold; }
+    .buy-btn { background:green; color:white; border:none; padding:10px 15px;
+      border-radius:6px; cursor:pointer; }
+    .owner-menu, .login-popup {
+      display:none; position:absolute; top:60px; right:20px; width:260px;
+      background:white; border:1px solid #ccc; padding:15px; border-radius:8px;
+      box-shadow:0 4px 10px rgba(0,0,0,0.2);
+    }
+    .owner-menu .close-btn {
+      position:absolute; top:6px; right:8px; width:28px; height:28px;
+      border:none; background:transparent; cursor:pointer; font-size:18px;
+      display:none;
+    }
+    .owner-menu input, .login-popup input {
+      display:block; margin:10px 0; padding:8px; width:100%; box-sizing:border-box;
+    }
+    .owner-menu button, .login-popup button {
+      background:blue; color:white; border:none; padding:10px 15px;
+      border-radius:6px; cursor:pointer; width:100%;
+    }
+    .login-popup button { background:darkred; }
+  </style>
+</head>
+<body>
+  <div class="banner">
+    <h1>My Store</h1>
+    <div id="redDot" class="red-dot" title="Owner"></div>
+  </div>
+
+  <!-- Login Popup -->
+  <div id="loginPopup" class="login-popup">
+    <h3>Owner Login</h3>
+    <input type="email" id="ownerEmail" placeholder="Email" autocomplete="username"/>
+    <input type="password" id="ownerPassword" placeholder="Password" autocomplete="current-password"/>
+    <button onclick="ownerLogin()">Login</button>
+  </div>
+
+  <!-- Owner Menu -->
+  <div id="ownerMenu" class="owner-menu">
+    <button id="ownerCloseBtn" class="close-btn" onclick="ownerCloseAndSignOut()">✕</button>
+    <h3>Add Product</h3>
+    <input type="file" id="productImage" accept="image/*" />
+    <input type="text" id="productPrice" placeholder="Enter price" />
+    <button onclick="addProduct()">Add to Store</button>
+  </div>
+
+  <!-- Store grid -->
+  <div id="store" class="store"></div>
+</body>
+</html>
